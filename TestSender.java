@@ -1,6 +1,8 @@
 import java.net.*;
 import java.util.*;
 import java.util.concurrent.Semaphore;
+import java.util.zip.CRC32;
+import java.util.zip.Checksum;
 import java.io.*;
 
 public class TestSender {
@@ -31,6 +33,8 @@ public class TestSender {
 	float alpha;
 	float beta;
 	int TimeoutInterval;
+	
+	PLD pld;
 
 	
 	public TestSender() {
@@ -73,7 +77,8 @@ public class TestSender {
 			e.printStackTrace();
 			System.exit(-1);
 		}
-		
+
+		pld = new PLD(socket, dstAddr, dstPort);
 		
 		OutThread out = new OutThread();
 		InThread in = new InThread();
@@ -107,7 +112,7 @@ public class TestSender {
 			}
 		}
 	}
-
+	
 	public void send(Packet packet) {
 		byte[] bytes = Packet.toBytes(packet);
 		DatagramPacket dp = new DatagramPacket(bytes,bytes.length,dstAddr,dstPort);
@@ -116,6 +121,14 @@ public class TestSender {
 		} catch(IOException e) {
 			System.err.println("Unable to send packet");
 		}
+	}
+	
+	public long getChecksum(Packet packet) {
+		Checksum checksum = new CRC32();
+		packet.setChecksum(0);
+		byte[] bytes = Packet.toBytes(packet);
+		checksum.update(bytes, 0, bytes.length);
+		return checksum.getValue();
 	}
 
 	public class OutThread extends Thread {
@@ -133,6 +146,7 @@ public class TestSender {
 						packet.setSeqNum(nextSeqNum);
 						setTimer(true);
 						state = TestSender.State.SYN_SENT;
+						packet.setChecksum(getChecksum(packet));
 						send(packet);
 						packetMap.put(nextSeqNum, packet);
 						nextSeqNum++;
@@ -144,13 +158,15 @@ public class TestSender {
 						if(nextSeqNum - send_base <= MWS) {
 							if(packetMap.containsKey(nextSeqNum)) {
 								Packet packet = packetMap.get(nextSeqNum);
-								send(packet);
+								packet.setChecksum(getChecksum(packet));
+								pld.send(new Packet(packet));
 								System.out.println("sender: sending packet " + packet.getSeqNum());
 								if(send_base == nextSeqNum) {
 									setTimer(true);
 								}
 								nextSeqNum += packet.getData().length;
 								if(!stopWatch.isStarted()) {
+									System.out.println("setting timer for " + packet.getSeqNum());
 									stopWatch.start(packet.getSeqNum(),nextSeqNum);
 								}
 							}
@@ -196,6 +212,7 @@ public class TestSender {
 							rcvrSeqNum = packet.getSeqNum() + 1;
 							ack.setAckNum(rcvrSeqNum);
 							ack.setSeqNum(nextSeqNum);
+							ack.setChecksum(getChecksum(ack));
 							send(ack);
 							nextSeqNum++;
 							System.out.println("sender: ESTABLISHED");
@@ -219,8 +236,12 @@ public class TestSender {
 								EstimatedRTT = (int)((1f-alpha) * EstimatedRTT + alpha*SampleRTT);
 								DevRTT = (int)((1f-beta)*DevRTT + beta*Math.abs(SampleRTT - EstimatedRTT));
 								TimeoutInterval = EstimatedRTT + gamma*DevRTT;
-								System.out.println("Packet "+stopWatch.getSeqNum()+" TimeoutInterval="+TimeoutInterval);
+								System.out.println("Packet "+stopWatch.getSeqNum()+" EstimatedRTT="+EstimatedRTT);
 								stopWatch.reset();
+							} else if(stopWatch.isStarted() && ackNum > stopWatch.getExpectedAck()) {
+								// ack for timed packet is skipped because of duplicate, reset stopWatch
+								stopWatch.reset();
+								System.out.println("cancel RTT timer for " + stopWatch.getSeqNum());
 							}
 							// if last ack
 							if(ackNum == finalSeqNum) {
@@ -228,6 +249,7 @@ public class TestSender {
 								Packet fin = new Packet();
 								fin.setFin(true);
 								fin.setSeqNum(finalSeqNum);
+								fin.setChecksum(getChecksum(fin));
 								send(fin);
 								state = TestSender.State.FIN_WAIT_1;
 								System.out.println("sender: FIN_WAIT_1");
@@ -235,11 +257,11 @@ public class TestSender {
 							}
 						} else {
 							// a duplicate ack
-							System.out.println("sender: duplicate ack " + ackNum);
+							System.out.println("sender: received duplicate ack " + ackNum);
 							acked.put(ackNum, acked.get(ackNum)+1);
 							if(acked.get(ackNum) == 3) {
 								// fast retransmit
-								send(packetMap.get(ackNum));
+								pld.send(new Packet(packetMap.get(ackNum)));
 								if(stopWatch.getSeqNum() == ackNum) {
 									stopWatch.reset();
 								}
@@ -256,6 +278,7 @@ public class TestSender {
 							Packet finack = new Packet();
 							finack.setAck(true);
 							finack.setAckNum(packet.getSeqNum()+1);
+							finack.setChecksum(getChecksum(finack));
 							send(finack);
 							state = TestSender.State.TIME_WAIT;
 							System.out.println("sender: TIME_WAIT");

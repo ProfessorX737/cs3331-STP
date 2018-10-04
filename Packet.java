@@ -6,6 +6,7 @@ import java.io.ObjectInputStream;
 import java.io.ObjectOutput;
 import java.io.ObjectOutputStream;
 import java.io.Serializable;
+import java.util.Arrays;
 
 public class Packet implements Serializable {
 	private static final long serialVersionUID = 1L;
@@ -15,20 +16,33 @@ public class Packet implements Serializable {
 	private int seqNum;
 	private int ackNum;
 	private int recvWindow;
+	private long checksum;
 	private byte[] data;
 	
 	public Packet(boolean syn, boolean ack, boolean fin, 
-			int seqNum, int ackNum, int recvWindow, byte[] data) {
+			int seqNum, int ackNum, int recvWindow, long checksum, byte[] data) {
 		this.syn = syn;
 		this.ack = ack;
 		this.fin = fin;
 		this.seqNum = seqNum;
 		this.ackNum = ackNum;
+		this.checksum = checksum;
 		this.data = data;
 	}
 	
+	public Packet(Packet p) {
+		this(p.getSyn(),
+			 p.getAck(),
+			 p.getFin(),
+			 p.getSeqNum(),
+			 p.getAckNum(),
+			 p.getRecvWindow(),
+			 p.getChecksum(),
+			 Arrays.copyOf(p.getData(), p.getData().length));
+	}
+	
 	public Packet() {
-		this(false,false,false,0,0,0,null);
+		this(false,false,false,0,0,0,0,null);
 	}
 	
 	public boolean getSyn() {
@@ -53,6 +67,10 @@ public class Packet implements Serializable {
 	
 	public int getRecvWindow() {
 		return recvWindow;
+	}
+	
+	public long getChecksum() {
+		return checksum;
 	}
 	
 	public byte[] getData() {
@@ -87,6 +105,10 @@ public class Packet implements Serializable {
 		this.data = data;
 	}
 	
+	public void setChecksum(long checksum) {
+		this.checksum = checksum;
+	}
+	
 	public String toString() {
 		String result = "";
 		result += syn ? "1;" : "0;";
@@ -95,6 +117,7 @@ public class Packet implements Serializable {
 		result += Integer.toString(seqNum) + ";";
 		result += Integer.toString(ackNum) + ";";
 		result += Integer.toString(recvWindow) + ";";
+		result += Long.toString(checksum) + ";";
 		return result;
 	}
 	

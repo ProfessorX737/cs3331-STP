@@ -1,6 +1,8 @@
 import java.net.*;
 import java.util.*;
 import java.io.*;
+import java.util.zip.CRC32;
+import java.util.zip.Checksum;
 
 public class TestReceiver {
 	static int myPort = 8080;
@@ -24,6 +26,7 @@ public class TestReceiver {
 	public TestReceiver() {
 		inOrderPackets = new ArrayList<>();
 		outOfOrder = new PriorityQueue<>();
+		packetMap = new HashMap<>();
 		state = TestReceiver.State.LISTEN;
 		
 		try {
@@ -89,7 +92,7 @@ public class TestReceiver {
 					Packet ack = new Packet();
 					ack.setAck(true);
 					// in order packet
-					if(seqNum == nextSeqNum) {
+					if(seqNum == nextSeqNum && !isCorrupt(packet)) {
 						inOrderPackets.add(packet);
 						nextSeqNum += packet.getData().length;
 						// if incoming packet fills a gap in data
@@ -101,13 +104,13 @@ public class TestReceiver {
 						}
 						ack.setAckNum(nextSeqNum);
 						ack.setSeqNum(mySeqNum);
-						mySeqNum++;
 						System.out.println("receiver: sending ack " + nextSeqNum);
 						send(ack);
 					} else {
+						if(isCorrupt(packet)) System.out.println("corrupt packet "+packet.getSeqNum());
 						// send duplicate ack
 						ack.setAckNum(nextSeqNum);
-						ack.setSeqNum(mySeqNum-1);
+						ack.setSeqNum(mySeqNum);
 						System.out.println("receiver: sending duplicate ack " + nextSeqNum);
 						send(ack);
 						if(seqNum > nextSeqNum) {
@@ -150,6 +153,17 @@ public class TestReceiver {
 		} catch(IOException e) {
 			System.err.println("Unable to send packet");
 		}
+	}
+	
+	public boolean isCorrupt(Packet packet) {
+		long senderChecksum = packet.getChecksum();
+		Checksum checksum = new CRC32();
+		packet.setChecksum(0);
+		byte[] bytes = Packet.toBytes(packet);
+		checksum.update(bytes, 0, bytes.length);
+		packet.setChecksum(senderChecksum);
+		if(checksum.getValue() != senderChecksum) return true;
+		return false;
 	}
 	
 	public static void main(String[] args) {
