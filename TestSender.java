@@ -4,7 +4,6 @@ import java.util.concurrent.Semaphore;
 import java.io.*;
 
 public class TestSender {
-	static int myPort = 3300;
 	static String destIp = "127.0.0.1";
 	static int dstPort = 8080;
 	static String file = "test0.pdf";
@@ -45,10 +44,23 @@ public class TestSender {
 
 		try {
 			dstAddr = InetAddress.getByName(destIp);
-			socket = new DatagramSocket(myPort);
+			socket = new DatagramSocket();
 			FileInputStream fis = new FileInputStream(new File(file));
 			
-			
+			byte[] buffer = new byte[MSS];
+			int seqNum = 2;
+			while(fis.read(buffer, 0, MSS) != -1) {
+				Packet packet = new Packet();
+				packet.setData(buffer);
+				packet.setSeqNum(seqNum);
+				packetMap.put(seqNum, packet);
+				seqNum += MSS;
+				buffer = new byte[MSS];
+			}
+			finalSeqNum = seqNum;
+			System.out.println(finalSeqNum);
+			fis.close();
+		
 		} catch (Exception e) {
 			e.printStackTrace();
 			System.exit(-1);
@@ -97,17 +109,14 @@ public class TestSender {
 	// modifies nextSeqNum, state and timer
 	// uses send_base
 	public class OutThread extends Thread {
-		public OutThread() {
-			
-		}
+		public OutThread() {}
 
 		public void run() {
 			try {
-				FileInputStream fis = new FileInputStream(new File(file));
 				while(true) {
-					
 					s.acquire();
 					if(state == TestSender.State.NONE) {
+
 						// send SYN
 						Packet packet = new Packet();
 						packet.setSyn(true);
@@ -118,45 +127,29 @@ public class TestSender {
 						packetMap.put(nextSeqNum, packet);
 						nextSeqNum++;
 						System.out.println("sender: SYN_SENT");
+
 					} else if(state == TestSender.State.ESTABLISHED) {
-						if(!finished) {
-							// only send data if window is not full
-							if(nextSeqNum - send_base <= MWS) {
-								Packet packet = new Packet();
-								if(packetMap.containsKey(nextSeqNum)) {
-									packet = packetMap.get(nextSeqNum);
-								} else {
-									byte[] buffer = new byte[MSS];
-									int numRead = fis.read(buffer, 0, MSS);
-									if(numRead == -1) {
-										finished = true;
-										System.out.println("finished reading file");
-										s.release();
-										continue;
-									}
-									packet.setSeqNum(nextSeqNum);
-									packet.setData(buffer);
-								}
+
+						// only send data if window is not full
+						if(nextSeqNum - send_base <= MWS) {
+							if(packetMap.containsKey(nextSeqNum)) {
+								Packet packet = packetMap.get(nextSeqNum);
 								send(packet);
-								System.out.println("sender: sending packet " + nextSeqNum+ " window: " + send_base+"-"+nextSeqNum);
+								System.out.println("sender: sending packet " + packet.getSeqNum());
 								if(send_base == nextSeqNum) {
 									setTimer(true);
 									stopWatch.start();
 								}
-								packetMap.put(nextSeqNum, packet);
 								nextSeqNum += packet.getData().length;
 							}
 						}
-					} else if(state == TestSender.State.FIN_WAIT_1) {
-						Packet packet = new Packet();
-						packet.setFin(true);
-						packet.setSeqNum(nextSeqNum);
-						send(packet);
+					} else if(state == TestSender.State.CLOSED) {
+						System.out.println("sender: CLOSED");
+						s.release();
 						break;
 					}
 					s.release();
 				}
-				fis.close();
 				socket.close();
 				setTimer(false);
 				System.out.println("all done!");
@@ -168,9 +161,7 @@ public class TestSender {
 	
 	// modifies send_base, 
 	public class InThread extends Thread {
-		public InThread() {
-			
-		}
+		public InThread() {}
 		
 		public void run() {
 			int headerSize = Packet.toBytes(new Packet()).length;
@@ -201,7 +192,7 @@ public class TestSender {
 					} else if(state == TestSender.State.ESTABLISHED) {
 						// if normal ack
 						if(ackNum > send_base) {
-							System.out.println("sender: received ack " + ackNum);
+							System.out.println("sender: received ack="+ackNum+" seqNum="+packet.getSeqNum());
 							send_base = ackNum;
 							acked.put(ackNum, 1);
 							if(send_base == nextSeqNum) {
@@ -213,10 +204,16 @@ public class TestSender {
 							}
 							EstimatedRTT = stopWatch.getElapsedTime();
 							stopWatch.reset();
-							if(finished && ackNum == nextSeqNum) {
+							// if last ack
+							if(ackNum == finalSeqNum) {
+								// send FIN
+								Packet fin = new Packet();
+								fin.setFin(true);
+								fin.setSeqNum(finalSeqNum);
+								send(fin);
 								state = TestSender.State.FIN_WAIT_1;
-								s.release();
-								break;
+								System.out.println("sender: FIN_WAIT_1");
+								nextSeqNum++;
 							}
 						} else {
 							// a duplicate ack
@@ -228,7 +225,25 @@ public class TestSender {
 								System.out.println("sender: fast retransmit " + ackNum);
 							}
 						}
-					}
+					} else if(state == TestSender.State.FIN_WAIT_1) {
+						if(ackNum == nextSeqNum) {
+							state = TestSender.State.FIN_WAIT_2;
+							System.out.println("sender: FIN_WAIT_2");
+						}
+					} else if(state == TestSender.State.FIN_WAIT_2) {
+						if(packet.getFin()) {
+							Packet finack = new Packet();
+							finack.setAck(true);
+							finack.setAckNum(packet.getSeqNum()+1);
+							send(finack);
+							state = TestSender.State.TIME_WAIT;
+							System.out.println("sender: TIME_WAIT");
+							// don't wait
+							state = TestSender.State.CLOSED;
+							s.release();
+							break;
+						}
+					} 
 					s.release(); // === exit lock ===
 				}
 			} catch (Exception e) {

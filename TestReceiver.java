@@ -4,7 +4,7 @@ import java.io.*;
 
 public class TestReceiver {
 	static int myPort = 8080;
-	static int dstPort = 3000;
+	static int dstPort;
 	static int MSS = 150;
 	static String host_ip = "127.0.0.1";
 
@@ -68,8 +68,26 @@ public class TestReceiver {
 						nextSeqNum++;
 					}
 				} else if(state == State.ESTABLISHED) {
-					System.out.println("receiver: received " + seqNum);
-					if(packet.getFin()) break;
+					if(packet.getFin() && seqNum == nextSeqNum) {
+						Packet finack = new Packet();
+						finack.setAck(true);
+						nextSeqNum++;
+						finack.setAckNum(nextSeqNum);
+						finack.setSeqNum(mySeqNum);
+						mySeqNum++;
+						send(finack);
+						state = State.CLOSE_WAIT;
+						System.out.println("receiver: ClOSE_WAIT");
+						Packet fin = new Packet();
+						fin.setFin(true);
+						fin.setSeqNum(mySeqNum);
+						mySeqNum++;
+						send(fin);
+						state = State.LAST_ACK;
+						System.out.println("receiver: LAST_ACK");
+						continue;
+					}
+					System.out.println("receiver: received " + seqNum + " datasize: " + packet.getData().length);
 					Packet ack = new Packet();
 					ack.setAck(true);
 					// in order packet
@@ -100,7 +118,13 @@ public class TestReceiver {
 							packetMap.put(seqNum, packet);
 						}
 					}
-				} 
+				} else if(state == State.LAST_ACK) {
+					if(packet.getAck() && packet.getAckNum() == mySeqNum) {
+						state = State.CLOSED;
+						System.out.println("receiver: CLOSED");
+						break;
+					}
+				}
 			}
 
 			File file = new File("out.pdf");
