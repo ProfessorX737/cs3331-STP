@@ -96,6 +96,14 @@ public class TestSender {
 				FileInputStream fis = new FileInputStream(new File(file));
 				while(true) {
 					
+//					if(state == TestSender.State.NONE) {
+//						
+//					} else if(state == TestSender.State.ESTABLISHED) {
+//						
+//					} else if(state == TestSender.State.FIN_WAIT_1) {
+//						
+//					}
+					
 					if(state == TestSender.State.FIN_WAIT_1) {
 						Packet packet = new Packet();
 						packet.setFin(true);

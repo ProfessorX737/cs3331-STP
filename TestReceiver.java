@@ -9,16 +9,18 @@ public class TestReceiver {
 	static String host_ip = "127.0.0.1";
 	
 	DatagramSocket socket;
-	List<Packet> packets;
+	List<Packet> inOrderPackets;
 	Queue<Integer> outOfOrder;
+	Map<Integer,Packet> packetMap;
 	InetAddress dstAddr;
 
+	int mySeqNum = 0;
 	boolean finished = false;
 	int prevSeqNum = 0;
 	int nextSeqNum = 0;
 	
 	public TestReceiver() {
-		packets = new ArrayList<>();
+		inOrderPackets = new ArrayList<>();
 		outOfOrder = new PriorityQueue<>();
 		
 		try {
@@ -36,6 +38,10 @@ public class TestReceiver {
 				socket.receive(dp);
 				Packet packet = Packet.fromBytes(buffer);
 				int seqNum = packet.getSeqNum();
+				
+//				if(packet.getSyn()) {
+//					//
+//				}
 
 				if(packet.getFin()) {
 					break;
@@ -46,11 +52,18 @@ public class TestReceiver {
 				ack.setAck(true);
 				// in order packet
 				if(seqNum == nextSeqNum) {
-					packets.add(packet);
+					inOrderPackets.add(packet);
 					nextSeqNum += packet.getData().length;
+					// if incoming packet fills a gap in data
+					while(!outOfOrder.isEmpty() && outOfOrder.peek() == nextSeqNum) {
+						int poll = outOfOrder.poll();
+						Packet p = packetMap.get(poll);
+						inOrderPackets.add(p);
+						nextSeqNum += p.getData().length;
+					}
 					ack.setAckNum(nextSeqNum);
 					byte[] bytes = Packet.toBytes(ack);
-					System.out.println("receiver: in order ack " + nextSeqNum);
+					System.out.println("receiver: sending ack " + nextSeqNum);
 					socket.send(new DatagramPacket(bytes,bytes.length,dstAddr,dstPort));
 				} else {
 					// send duplicate ack
@@ -60,6 +73,8 @@ public class TestReceiver {
 					socket.send(new DatagramPacket(bytes,bytes.length,dstAddr,dstPort));
 					if(seqNum > nextSeqNum) {
 						// gap detected
+						outOfOrder.add(seqNum);
+						packetMap.put(seqNum, packet);
 					}
 				}
 			}
@@ -67,7 +82,7 @@ public class TestReceiver {
 			File file = new File("out.pdf");
 			if(!file.exists()) file.createNewFile();
 			FileOutputStream fos = new FileOutputStream(file);
-			for(Packet packet : packets) {
+			for(Packet packet : inOrderPackets) {
 				byte[] data = packet.getData();
 				fos.write(packet.getData(), 0, data.length);
 			}
