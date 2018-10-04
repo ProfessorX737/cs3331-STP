@@ -6,7 +6,6 @@ public class TestReceiver {
 	static int myPort = 8080;
 	static int dstPort;
 	static int MSS = 150;
-	static String host_ip = "127.0.0.1";
 
 	private enum State {NONE, LISTEN, SYN_RCVD, ESTABLISHED, CLOSE_WAIT, LAST_ACK, CLOSED};
 	private State state;
@@ -29,7 +28,6 @@ public class TestReceiver {
 		
 		try {
 			socket = new DatagramSocket(myPort);
-			dstAddr = InetAddress.getByName(host_ip);
 			
 			Packet testPk = new Packet();
 			byte[] buffer = new byte[MSS];

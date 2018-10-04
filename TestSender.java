@@ -9,6 +9,7 @@ public class TestSender {
 	static String file = "test0.pdf";
 	static int MWS = 600;
 	static int MSS = 150;
+	static int gamma = 4;
 	
 	InetAddress dstAddr;
 	DatagramSocket socket;
@@ -20,14 +21,17 @@ public class TestSender {
 	Semaphore s;
 	boolean finished = false;
 	Timer timer;
-	StopWatch stopWatch;
+	PacketStopWatch stopWatch;
 	Map<Integer, Integer> acked; // mapping acks to number of times it was received
 	Map<Integer, Packet> packetMap; // maps sequence number to packet
-	int EstimatedRTT;
 	int rcvrSeqNum;
 	int finalSeqNum;
+	int EstimatedRTT;
+	int DevRTT;
+	float alpha;
+	float beta;
+	int TimeoutInterval;
 
-	int timeoutInterval = 500;
 	
 	public TestSender() {
 		state = State.NONE;
@@ -36,11 +40,16 @@ public class TestSender {
 		s = new Semaphore(1);
 		finished = false;
 		timer = new Timer();
-		stopWatch = new StopWatch();
+		stopWatch = new PacketStopWatch();
 		acked = new HashMap<>();
 		packetMap = new HashMap<>();
 		rcvrSeqNum = 0;
 		finalSeqNum = 0;
+		EstimatedRTT = 500;
+		DevRTT = 250;
+		alpha = 0.125f;
+		beta = 0.25f;
+		TimeoutInterval = EstimatedRTT + gamma*DevRTT;
 
 		try {
 			dstAddr = InetAddress.getByName(destIp);
@@ -58,7 +67,6 @@ public class TestSender {
 				buffer = new byte[MSS];
 			}
 			finalSeqNum = seqNum;
-			System.out.println(finalSeqNum);
 			fis.close();
 		
 		} catch (Exception e) {
@@ -77,7 +85,7 @@ public class TestSender {
 		timer.cancel();
 		if(newTimer) {
 			timer = new Timer();
-			timer.schedule(new Timeout(), timeoutInterval);
+			timer.schedule(new Timeout(), TimeoutInterval);
 		}
 	}
 	
@@ -89,6 +97,10 @@ public class TestSender {
 				System.out.println("timeout occurred!" + " resending " + send_base);
 				send(packetMap.get(send_base));
 				setTimer(true);
+				// if stop watch was timing this segment reset it
+				if(stopWatch.isStarted() && stopWatch.getSeqNum() == send_base) {
+					stopWatch.reset();
+				}
 				s.release();
 			} catch (Exception e) {
 				e.printStackTrace();
@@ -106,8 +118,6 @@ public class TestSender {
 		}
 	}
 
-	// modifies nextSeqNum, state and timer
-	// uses send_base
 	public class OutThread extends Thread {
 		public OutThread() {}
 
@@ -138,9 +148,11 @@ public class TestSender {
 								System.out.println("sender: sending packet " + packet.getSeqNum());
 								if(send_base == nextSeqNum) {
 									setTimer(true);
-									stopWatch.start();
 								}
 								nextSeqNum += packet.getData().length;
+								if(!stopWatch.isStarted()) {
+									stopWatch.start(packet.getSeqNum(),nextSeqNum);
+								}
 							}
 						}
 					} else if(state == TestSender.State.CLOSED) {
@@ -159,7 +171,6 @@ public class TestSender {
 		}
 	}
 	
-	// modifies send_base, 
 	public class InThread extends Thread {
 		public InThread() {}
 		
@@ -202,8 +213,15 @@ public class TestSender {
 								// remaining unacked segments so start timer
 								setTimer(true);
 							}
-							EstimatedRTT = stopWatch.getElapsedTime();
-							stopWatch.reset();
+							// if ack arrives for the segment that is being timed for RTT
+							if(stopWatch.isStarted() && stopWatch.getExpectedAck() == ackNum) {
+								int SampleRTT = stopWatch.getElapsedTime();
+								EstimatedRTT = (int)((1f-alpha) * EstimatedRTT + alpha*SampleRTT);
+								DevRTT = (int)((1f-beta)*DevRTT + beta*Math.abs(SampleRTT - EstimatedRTT));
+								TimeoutInterval = EstimatedRTT + gamma*DevRTT;
+								System.out.println("Packet "+stopWatch.getSeqNum()+" TimeoutInterval="+TimeoutInterval);
+								stopWatch.reset();
+							}
 							// if last ack
 							if(ackNum == finalSeqNum) {
 								// send FIN
@@ -222,6 +240,9 @@ public class TestSender {
 							if(acked.get(ackNum) == 3) {
 								// fast retransmit
 								send(packetMap.get(ackNum));
+								if(stopWatch.getSeqNum() == ackNum) {
+									stopWatch.reset();
+								}
 								System.out.println("sender: fast retransmit " + ackNum);
 							}
 						}
