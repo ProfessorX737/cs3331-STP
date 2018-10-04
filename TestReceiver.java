@@ -4,9 +4,12 @@ import java.io.*;
 
 public class TestReceiver {
 	static int myPort = 8080;
-	static int dstPort = 3300;
+	static int dstPort = 3000;
 	static int MSS = 150;
 	static String host_ip = "127.0.0.1";
+
+	private enum State {NONE, LISTEN, SYN_RCVD, ESTABLISHED, CLOSE_WAIT, LAST_ACK, CLOSED};
+	private State state;
 	
 	DatagramSocket socket;
 	List<Packet> inOrderPackets;
@@ -22,6 +25,7 @@ public class TestReceiver {
 	public TestReceiver() {
 		inOrderPackets = new ArrayList<>();
 		outOfOrder = new PriorityQueue<>();
+		state = TestReceiver.State.LISTEN;
 		
 		try {
 			socket = new DatagramSocket(myPort);
@@ -39,44 +43,64 @@ public class TestReceiver {
 				Packet packet = Packet.fromBytes(buffer);
 				int seqNum = packet.getSeqNum();
 				
-//				if(packet.getSyn()) {
-//					//
-//				}
-
-				if(packet.getFin()) {
-					break;
-				}
-				System.out.println("receiver: received " + seqNum + " dataSize: " + packet.getData().length);
-
-				Packet ack = new Packet();
-				ack.setAck(true);
-				// in order packet
-				if(seqNum == nextSeqNum) {
-					inOrderPackets.add(packet);
-					nextSeqNum += packet.getData().length;
-					// if incoming packet fills a gap in data
-					while(!outOfOrder.isEmpty() && outOfOrder.peek() == nextSeqNum) {
-						int poll = outOfOrder.poll();
-						Packet p = packetMap.get(poll);
-						inOrderPackets.add(p);
-						nextSeqNum += p.getData().length;
+				if(state == State.LISTEN) {
+					if(packet.getSyn()) {
+						// extract destination ip and port
+						dstAddr = dp.getAddress();
+						dstPort = dp.getPort();
+						nextSeqNum = packet.getSeqNum() + 1;
+						// send SYNACK
+						Packet synack = new Packet();
+						synack.setSyn(true);
+						synack.setAck(true);
+						synack.setSeqNum(mySeqNum);
+						synack.setAckNum(nextSeqNum);
+						send(synack);
+						state = State.SYN_RCVD;
+						System.out.println("receiver: SYN_RCVD");
+						mySeqNum++;
 					}
-					ack.setAckNum(nextSeqNum);
-					byte[] bytes = Packet.toBytes(ack);
-					System.out.println("receiver: sending ack " + nextSeqNum);
-					socket.send(new DatagramPacket(bytes,bytes.length,dstAddr,dstPort));
-				} else {
-					// send duplicate ack
-					ack.setAckNum(nextSeqNum);
-					byte[] bytes = Packet.toBytes(ack);
-					System.out.println("receiver: sending duplicate ack " + nextSeqNum);
-					socket.send(new DatagramPacket(bytes,bytes.length,dstAddr,dstPort));
-					if(seqNum > nextSeqNum) {
-						// gap detected
-						outOfOrder.add(seqNum);
-						packetMap.put(seqNum, packet);
+				} else if(state == State.SYN_RCVD) {
+					if(!packet.getSyn() && packet.getSeqNum() == nextSeqNum 
+							&& packet.getAckNum() == mySeqNum) {
+						System.out.println("receiver: ESTABLISHED");
+						state = State.ESTABLISHED;
+						nextSeqNum++;
 					}
-				}
+				} else if(state == State.ESTABLISHED) {
+					System.out.println("receiver: received " + seqNum);
+					if(packet.getFin()) break;
+					Packet ack = new Packet();
+					ack.setAck(true);
+					// in order packet
+					if(seqNum == nextSeqNum) {
+						inOrderPackets.add(packet);
+						nextSeqNum += packet.getData().length;
+						// if incoming packet fills a gap in data
+						while(!outOfOrder.isEmpty() && outOfOrder.peek() == nextSeqNum) {
+							int poll = outOfOrder.poll();
+							Packet p = packetMap.get(poll);
+							inOrderPackets.add(p);
+							nextSeqNum += p.getData().length;
+						}
+						ack.setAckNum(nextSeqNum);
+						ack.setSeqNum(mySeqNum);
+						mySeqNum++;
+						System.out.println("receiver: sending ack " + nextSeqNum);
+						send(ack);
+					} else {
+						// send duplicate ack
+						ack.setAckNum(nextSeqNum);
+						ack.setSeqNum(mySeqNum-1);
+						System.out.println("receiver: sending duplicate ack " + nextSeqNum);
+						send(ack);
+						if(seqNum > nextSeqNum) {
+							// gap detected
+							outOfOrder.add(seqNum);
+							packetMap.put(seqNum, packet);
+						}
+					}
+				} 
 			}
 
 			File file = new File("out.pdf");
@@ -88,10 +112,22 @@ public class TestReceiver {
 			}
 			
 			fos.close();
+			socket.close();
+			System.out.println("file created!");
 		} catch (Exception e) {
 			e.printStackTrace();
 		}
 		
+	}
+	
+	public void send(Packet packet) {
+		byte[] bytes = Packet.toBytes(packet);
+		DatagramPacket dp = new DatagramPacket(bytes,bytes.length,dstAddr,dstPort);
+		try {
+			socket.send(dp);
+		} catch(IOException e) {
+			System.err.println("Unable to send packet");
+		}
 	}
 	
 	public static void main(String[] args) {
