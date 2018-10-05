@@ -15,7 +15,7 @@ public class Packet implements Serializable {
 	private boolean fin;
 	private int seqNum;
 	private int ackNum;
-	private int recvWindow;
+	private int MSS;
 	private long checksum;
 	private byte[] data;
 	
@@ -36,7 +36,7 @@ public class Packet implements Serializable {
 			 p.getFin(),
 			 p.getSeqNum(),
 			 p.getAckNum(),
-			 p.getRecvWindow(),
+			 p.getMSS(),
 			 p.getChecksum(),
 			 Arrays.copyOf(p.getData(), p.getData().length));
 	}
@@ -65,8 +65,8 @@ public class Packet implements Serializable {
 		return ackNum;
 	}
 	
-	public int getRecvWindow() {
-		return recvWindow;
+	public int getMSS() {
+		return MSS;
 	}
 	
 	public long getChecksum() {
@@ -97,8 +97,8 @@ public class Packet implements Serializable {
 		this.ackNum = ackNum;
 	}
 	
-	public void setRecvWindow(int recvWindow) {
-		this.recvWindow = recvWindow;
+	public void setMSS(int MSS) {
+		this.MSS = MSS;
 	}
 	
 	public void setData(byte[] data) {
@@ -116,7 +116,7 @@ public class Packet implements Serializable {
 		result += fin ? "1;" : "0;";
 		result += Integer.toString(seqNum) + ";";
 		result += Integer.toString(ackNum) + ";";
-		result += Integer.toString(recvWindow) + ";";
+		result += Integer.toString(MSS) + ";";
 		result += Long.toString(checksum) + ";";
 		return result;
 	}

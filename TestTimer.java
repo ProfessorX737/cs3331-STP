@@ -17,14 +17,12 @@ public class TestTimer {
 		@Override
 		public void run() {
 			System.out.println("time out occured!");
+			timer.cancel();
 		}
 	}
 	public static void main(String[] args) {
 		TestTimer tt = new TestTimer();
 		System.out.println("setting timer");
 		tt.setTimer(true);
-		for(int i = 0; i < Integer.MAX_VALUE; i++) {}
-		System.out.println("resetting timer");
-		tt.setTimer(false);
 	}
 }
