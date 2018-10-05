@@ -19,8 +19,7 @@ public class PLD {
 	
 	private Packet reorderedPacket;
 	private int orderCount;
-	private PacketStopWatch stopWatch;
-	private Semaphore s;
+	private Semaphore delayLock;
 	
 	public PLD(DatagramSocket socket, InetAddress dstAddr, int dstPort, 
 			   float pDrop, float pDuplicate, float pCorrupt, float pOrder,
@@ -40,63 +39,64 @@ public class PLD {
 		random = new Random(seed);
 		reorderedPacket = null;
 		orderCount = 0;
-		stopWatch = new PacketStopWatch();
-		s = new Semaphore(1);
+		delayLock = new Semaphore(1);
 	}
 	
 	// beware that this function may modify the packet input
-	public void send(Packet packet) {
+	public void pld_send(Packet packet) {
 		
-		// decide whether to drop the packet
-		if(random.nextFloat() < pDrop) {
-			System.out.println("dropping packet "+packet.getSeqNum());
-			return;
-		}
-		
-		// decide whether to duplicate packet
-		if(random.nextFloat() < pDuplicate) {
-			safe_send(packet);
-			safe_send(packet);
-			System.out.println("duplicating packet "+packet.getSeqNum());
-			return;
-		}
-		
-		// decide whether to corrupt packet
-		if(random.nextFloat() < pCorrupt) {
-			byte[] data = packet.getData();
-			data[0] += 1;
-			System.out.println("corrupting packet "+packet.getSeqNum());
-			safe_send(packet);
-			return;
-		}
-		
-		// decide whether to send this packet out of order
-		if(random.nextFloat() < pOrder) {
-			// if there is no segment already waiting for reordering
-			if(reorderedPacket == null) {
-				System.out.println("packet "+packet.getSeqNum()+" to be reordered");
-				reorderedPacket = packet;
-				orderCount = 0;
-			} else {
+		try {
+			// decide whether to drop the packet
+			if(random.nextFloat() < pDrop) {
+				System.out.println("dropping packet "+packet.getSeqNum());
+				return;
+			}
+			
+			// decide whether to duplicate packet
+			if(random.nextFloat() < pDuplicate) {
 				safe_send(packet);
+				safe_send(packet);
+				System.out.println("duplicating packet "+packet.getSeqNum());
+				return;
 			}
-			return;
-		}
-		
-		// decide whether to delay packet
-		if(random.nextFloat() < pDelay) {
-			Timer timer = new Timer();
-			long delay = (long) (random.nextFloat()*maxDelay*1f);
-			System.out.println("packet "+packet.getSeqNum()+" to be delayed "+delay+" ms");
-			timer.schedule(new DelayedSend(timer,packet), delay);
-			if(!stopWatch.isStarted()) {
-				stopWatch.start(packet.getSeqNum(), packet.getAckNum());
+			
+			// decide whether to corrupt packet
+			if(random.nextFloat() < pCorrupt) {
+				byte[] data = packet.getData();
+				data[0] += 1;
+				System.out.println("corrupting packet "+packet.getSeqNum());
+				safe_send(packet);
+				return;
 			}
-			return;
+			
+			// decide whether to send this packet out of order
+			if(random.nextFloat() < pOrder) {
+				// if there is no segment already waiting for reordering
+				if(reorderedPacket == null) {
+					System.out.println("packet "+packet.getSeqNum()+" to be reordered");
+					reorderedPacket = packet;
+					orderCount = 0;
+				} else {
+					safe_send(packet);
+				}
+				return;
+			}
+			
+			// decide whether to delay packet
+			if(random.nextFloat() < pDelay) {
+				Timer timer = new Timer();
+				long delay = (long) (random.nextFloat()*maxDelay*1f);
+				System.out.println("packet "+packet.getSeqNum()+" to be delayed "+delay+" ms");
+				timer.schedule(new DelayedSend(timer,packet), delay);
+				return;
+			}
+			
+			// if not dropped, duplicated, corrupted, re-ordered or delayed, forward it
+			safe_send(packet);
+			
+		} catch (Exception e) {
+			e.printStackTrace();
 		}
-		
-		// if not dropped, duplicated, corrupted, re-ordered or delayed, forward it
-		safe_send(packet);
 	}
 	
 	public class DelayedSend extends TimerTask {
@@ -108,12 +108,6 @@ public class PLD {
 		}
 		public void run() {
 			safe_send(packet);
-			if(stopWatch.getSeqNum() == packet.getSeqNum()) {
-				System.out.println("delayed packet "+packet.getSeqNum()+" is sent after "+stopWatch.getElapsedTime());
-				stopWatch.reset();
-			} else {
-				System.out.println("delayed packet "+packet.getSeqNum()+" is sent");
-			}
 			timer.cancel();
 		}
 	}
@@ -129,11 +123,11 @@ public class PLD {
 	
 	private void safe_send(Packet packet) {
 		try {
-			s.acquire();
+			delayLock.acquire();
 			_send(packet);
 			orderCount++;
 			checkReorderSend();
-			s.release();
+			delayLock.release();
 		} catch(Exception e){
 			e.printStackTrace();
 		}

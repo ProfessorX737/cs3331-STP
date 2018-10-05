@@ -68,7 +68,6 @@ public class Receiver {
 							&& packet.getAckNum() == mySeqNum) {
 						System.out.println("receiver: ESTABLISHED");
 						state = State.ESTABLISHED;
-						nextSeqNum++;
 					}
 				} else if(state == State.ESTABLISHED) {
 					if(packet.getFin() && seqNum == nextSeqNum) {
@@ -91,11 +90,14 @@ public class Receiver {
 						continue;
 					}
 					System.out.println("receiver: received " + seqNum + " datasize: " + packet.getData().length);
+					if(isCorrupt(packet)) {
+						System.out.println("corrupt packet "+packet.getSeqNum());
+						continue;
+					}
 					Packet ack = new Packet();
 					ack.setAck(true);
 					// in order packet
-					boolean corrupt = isCorrupt(packet);
-					if(seqNum == nextSeqNum && !corrupt) {
+					if(seqNum == nextSeqNum) {
 						inOrderPackets.add(packet);
 						nextSeqNum += packet.getData().length;
 						// if incoming packet fills a gap in data
@@ -111,13 +113,12 @@ public class Receiver {
 						System.out.println("receiver: sending ack " + nextSeqNum);
 						send(ack);
 					} else {
-						if(corrupt) System.out.println("corrupt packet "+packet.getSeqNum());
 						// send duplicate ack
 						ack.setAckNum(nextSeqNum);
 						ack.setSeqNum(mySeqNum);
 						System.out.println("receiver: sending duplicate ack " + nextSeqNum);
 						send(ack);
-						if(seqNum > nextSeqNum && !corrupt && !outOfOrder.contains(seqNum)) {
+						if(seqNum > nextSeqNum && !outOfOrder.contains(seqNum)) {
 							// gap detected
 							outOfOrder.add(seqNum);
 							packetMap.put(seqNum, packet);
@@ -131,7 +132,6 @@ public class Receiver {
 					}
 				}
 			}
-
 			File file = new File(filename);
 			if(!file.exists()) file.createNewFile();
 			FileOutputStream fos = new FileOutputStream(file);
