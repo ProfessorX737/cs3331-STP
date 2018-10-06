@@ -17,11 +17,15 @@ public class LogLine {
 	}
 	
 	public String toString() {
-		return String.format("%s\t\t\t%.2f\t%s\t%d\t%d\t%d\n",event,
+		return String.format("%-10s\t%8.2f\t%8s\t%8d\t%8d\t%8d\n",event,
 				(time_ms*1f/1000f),type,seqNum,dataSize,ackNum);
 	}
 	
 	public void appendEvent(String event) {
 		this.event += event;
+	}
+	
+	public void setEvent(String event) {
+		this.event = event;
 	}
 }

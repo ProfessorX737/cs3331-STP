@@ -15,7 +15,7 @@ public class Packet implements Serializable {
 	private boolean fin;
 	private int seqNum;
 	private int ackNum;
-	private int MSS;
+	private int maxBufferSize;
 	private long checksum;
 	private byte[] data;
 	
@@ -36,7 +36,7 @@ public class Packet implements Serializable {
 			 p.getFin(),
 			 p.getSeqNum(),
 			 p.getAckNum(),
-			 p.getMSS(),
+			 p.getMaxBufferSize(),
 			 p.getChecksum(),
 			 Arrays.copyOf(p.getData(), p.getData().length));
 	}
@@ -65,8 +65,8 @@ public class Packet implements Serializable {
 		return ackNum;
 	}
 	
-	public int getMSS() {
-		return MSS;
+	public int getMaxBufferSize() {
+		return maxBufferSize;
 	}
 	
 	public long getChecksum() {
@@ -97,8 +97,8 @@ public class Packet implements Serializable {
 		this.ackNum = ackNum;
 	}
 	
-	public void setMSS(int MSS) {
-		this.MSS = MSS;
+	public void setMaxBufferSize(int maxBufferSize) {
+		this.maxBufferSize = maxBufferSize;
 	}
 	
 	public void setData(byte[] data) {
@@ -116,7 +116,7 @@ public class Packet implements Serializable {
 		result += fin ? "1;" : "0;";
 		result += Integer.toString(seqNum) + ";";
 		result += Integer.toString(ackNum) + ";";
-		result += Integer.toString(MSS) + ";";
+		result += Integer.toString(maxBufferSize) + ";";
 		result += Long.toString(checksum) + ";";
 		return result;
 	}
@@ -153,5 +153,9 @@ public class Packet implements Serializable {
 		return packet;
 	}
 
+	public int getDataSize() {
+		if(this.data != null) return this.data.length;
+		return 0;
+	}
 	
 }

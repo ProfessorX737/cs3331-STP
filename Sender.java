@@ -34,6 +34,7 @@ public class Sender {
 	PacketStopWatch stopWatch;
 	Map<Integer, Integer> acked; // mapping acks to number of times it was received
 	Map<Integer, Packet> packetMap; // maps sequence number to packet
+	Queue<Packet> retransmits;
 	int rcvrSeqNum;
 	int finalSeqNum;
 	int EstimatedRTT;
@@ -41,6 +42,8 @@ public class Sender {
 	float alpha;
 	float beta;
 	int TimeoutInterval;
+	int maxUnacked;
+	int numUnacked;
 	
 	FileOutputStream logfos;
 	long baseTime;
@@ -49,6 +52,20 @@ public class Sender {
 	private Packet reorderedPacket;
 	private int orderCount;
 	private Semaphore delayLock;
+	
+	String log;
+	
+	private int sizeOfFile;
+	private int numTransmitted;
+	private int numPLD;
+	private int numDropped;
+	private int numCorrupted;
+	private int numReordered;
+	private int numDuplicated;
+	private int numDelayed;
+	private int numTimeouts;
+	private int numFast;
+	private int numDupAcks;
 	
 	public Sender(String receiver_host_ip, int receiver_port, 
 			String file, int MWS, int MSS, int gamma, float pDrop,
@@ -63,6 +80,7 @@ public class Sender {
 		stopWatch = new PacketStopWatch();
 		acked = new HashMap<>();
 		packetMap = new HashMap<>();
+		retransmits = new LinkedList<>();
 		rcvrSeqNum = 0;
 		finalSeqNum = 0;
 		EstimatedRTT = 500;
@@ -70,6 +88,8 @@ public class Sender {
 		alpha = 0.125f;
 		beta = 0.25f;
 		TimeoutInterval = EstimatedRTT + gamma*DevRTT;
+		maxUnacked = MWS/MSS;
+		numUnacked = 0;
 		
 		this.dstPort = receiver_port;
 		this.file = file;
@@ -89,6 +109,19 @@ public class Sender {
 		reorderedPacket = null;
 		orderCount = 0;
 		delayLock = new Semaphore(1);
+		
+		log = "";
+		sizeOfFile = 0;
+		numTransmitted = 0;
+		numPLD = 0;
+		numDropped = 0;
+		numCorrupted = 0;
+		numReordered = 0;
+		numDuplicated = 0;
+		numDelayed = 0;
+		numTimeouts = 0;
+		numFast = 0;
+		numDupAcks = 0;
 
 		try {
 			dstAddr = InetAddress.getByName(receiver_host_ip);
@@ -107,31 +140,25 @@ public class Sender {
 				packet.setSeqNum(seqNum);
 				packetMap.put(seqNum, packet);
 				seqNum += read;
+				sizeOfFile += read;
 				buffer = new byte[MSS];
 			}
 			finalSeqNum = seqNum;
 			fis.close();
 
-			File log = new File("Sender_log.txt");
-			if(!log.exists()) log.createNewFile();
-			logfos = new FileOutputStream(log);
+			File logfile = new File("Sender_log.txt");
+			if(!logfile.exists()) logfile.createNewFile();
+			logfos = new FileOutputStream(logfile);
 		
 		} catch (Exception e) {
 			e.printStackTrace();
 			System.exit(-1);
 		}
-
-//		pld = new PLD(socket, dstAddr, dstPort,
-//				      pDrop, pDuplicate, pCorrupt,
-//				      pOrder, maxOrder, pDelay,
-//				      maxDelay, seed);
-
 		
 		OutThread out = new OutThread();
 		InThread in = new InThread();
 		out.start();
 		in.start();
-		baseTime = System.currentTimeMillis();
 	}
 	
 	public void setTimer(boolean newTimer) {
@@ -149,7 +176,11 @@ public class Sender {
 				s.acquire();
 				System.out.println("timeout occurred!" + " resending " + send_base);
 				Packet p = packetMap.get(send_base);
-				pld_send(packetMap.get(send_base),log("snd/RXT","D",p.getSeqNum(),p.getData().length,p.getAckNum()));
+				//retransmits.add(p);
+				int dataSize = 0;
+				if(p.getData() != null) dataSize = p.getData().length;
+				pld_send(p,log("snd/RXT","D",p.getSeqNum(),dataSize,p.getAckNum()));
+				numTimeouts++;
 				setTimer(true);
 				// if stop watch was timing this segment reset it
 				if(stopWatch.isStarted() && stopWatch.getSeqNum() == send_base) {
@@ -162,16 +193,6 @@ public class Sender {
 		}
 	}
 	
-	public void send(Packet packet) {
-		byte[] bytes = Packet.toBytes(packet);
-		DatagramPacket dp = new DatagramPacket(bytes,bytes.length,dstAddr,dstPort);
-		try {
-			socket.send(dp);
-		} catch(IOException e) {
-			System.err.println("Unable to send packet");
-		}
-	}
-	
 	public long getChecksum(Packet packet) {
 		Checksum checksum = new CRC32();
 		packet.setChecksum(0);
@@ -181,36 +202,44 @@ public class Sender {
 	}
 
 	public class OutThread extends Thread {
-		public OutThread() {}
+		private int maxBufferSize;
+		public OutThread() {
+			byte[] buffer = new byte[MSS];
+			Packet testPk = new Packet();
+			testPk.setData(buffer);
+			maxBufferSize = Packet.toBytes(testPk).length;
+		}
 
 		public void run() {
 			try {
 				while(true) {
 					s.acquire();
 					if(state == Sender.State.NONE) {
-
 						// send SYN
 						Packet packet = new Packet();
 						packet.setSyn(true);
 						packet.setSeqNum(nextSeqNum);
-						packet.setMSS(MSS);
+						packet.setMaxBufferSize(maxBufferSize);
 						setTimer(true);
 						state = Sender.State.SYN_SENT;
 						packet.setChecksum(getChecksum(packet));
-						send(packet);
 						packetMap.put(nextSeqNum, packet);
+						baseTime = System.currentTimeMillis();
+						_send(packet);
 						log(log("snd","S",nextSeqNum,0,0));
 						nextSeqNum++;
 						System.out.println("sender: SYN_SENT");
 					} else if(state == Sender.State.ESTABLISHED) {
-
-						// only send data if window is not full
-						if(nextSeqNum - send_base <= MWS) {
+						
+						if(numUnacked < maxUnacked) {
+						//if(nextSeqNum - send_base <= MWS - MSS) {
 							if(packetMap.containsKey(nextSeqNum)) {
 								Packet packet = packetMap.get(nextSeqNum);
+								packet.setAckNum(rcvrSeqNum);
 								packet.setChecksum(getChecksum(packet));
 								LogLine line = log("snd","D",nextSeqNum,packet.getData().length,packet.getAckNum());
 								pld_send(new Packet(packet),line);
+								numUnacked++;
 								System.out.println("sender: sending packet " + packet.getSeqNum());
 								if(send_base == nextSeqNum) {
 									setTimer(true);
@@ -229,6 +258,8 @@ public class Sender {
 					}
 					s.release();
 				}
+				addLogSummary();
+				logfos.write(log.getBytes());
 				socket.close();
 				setTimer(false);
 				System.out.println("all done!");
@@ -236,6 +267,22 @@ public class Sender {
 				e.printStackTrace();
 			}
 		}
+	}
+	
+	private void addLogSummary() {
+		log += String.format("===============================================\n");
+		log += String.format("Size of the file (in Bytes)\t\t%10d\n",sizeOfFile);
+		log += String.format("Segments transmitted (including drop & RXT) \t\t%10d\n",numTransmitted);
+		log += String.format("Number of Segments handled by PLD \t\t%10d\n",numPLD);
+		log += String.format("Number of Segments dropped \t\t%10d\n",numDropped);
+		log += String.format("Number of Segments Corrupted \t\t%10d\n",numCorrupted);
+		log += String.format("Number of Segments Re-ordered \t\t%10d\n",numReordered);
+		log += String.format("Number of Segments Duplicated \t\t%10d\n",numDuplicated);
+		log += String.format("Number of Segments Delayed\t%10d\n",numDelayed);
+		log += String.format("Number of Retransmissions due to TIMEOUT \t\t%10d\n",numTimeouts);
+		log += String.format("Number of FAST RETRANSMISSON \t\t%10d\n",numFast);
+		log += String.format("Number of DUP ACKS received \t\t%10d\n",numDupAcks);
+		log += String.format("===============================================\n");
 	}
 	
 	public class InThread extends Thread {
@@ -265,7 +312,7 @@ public class Sender {
 							ack.setAckNum(rcvrSeqNum);
 							ack.setSeqNum(nextSeqNum);
 							ack.setChecksum(getChecksum(ack));
-							send(ack);
+							_send(ack);
 							log(log("snd","A",nextSeqNum,0,rcvrSeqNum));
 							System.out.println("sender: ESTABLISHED");
 						}
@@ -275,7 +322,8 @@ public class Sender {
 							log(log("rcv","A",packet.getSeqNum(),0,ackNum));
 							System.out.println("sender: received ack="+ackNum+" seqNum="+packet.getSeqNum());
 							send_base = ackNum;
-							acked.put(ackNum, 1);
+							numUnacked--;
+							acked.put(ackNum, 0);
 							if(send_base == nextSeqNum) {
 								// no unacked segments so stop timer
 								setTimer(false);
@@ -305,7 +353,7 @@ public class Sender {
 								fin.setChecksum(getChecksum(fin));
 								fin.setAckNum(rcvrSeqNum);
 								log(log("snd","F",finalSeqNum,0,rcvrSeqNum));
-								send(fin);
+								_send(fin);
 								state = Sender.State.FIN_WAIT_1;
 								System.out.println("sender: FIN_WAIT_1");
 								nextSeqNum++;
@@ -314,11 +362,14 @@ public class Sender {
 							log(log("rcv/DA","A",packet.getSeqNum(),0,ackNum));
 							// a duplicate ack
 							System.out.println("sender: received duplicate ack " + ackNum);
+							numDupAcks++;
 							acked.put(ackNum, acked.get(ackNum)+1);
 							if(acked.get(ackNum) == 3) {
 								// fast retransmit
 								Packet p = packetMap.get(ackNum);
 								pld_send(new Packet(p),log("snd/RXT","D",p.getSeqNum(),p.getData().length,p.getAckNum()));
+								numFast++;
+								//retransmits.add(p);
 								if(stopWatch.getSeqNum() == ackNum) {
 									stopWatch.reset();
 								}
@@ -339,7 +390,7 @@ public class Sender {
 							finack.setAckNum(packet.getSeqNum()+1);
 							finack.setChecksum(getChecksum(finack));
 							finack.setSeqNum(nextSeqNum);
-							send(finack);
+							_send(finack);
 							log(log("snd","A",finack.getSeqNum(),0,finack.getAckNum()));
 							state = Sender.State.TIME_WAIT;
 							System.out.println("sender: TIME_WAIT");
@@ -362,11 +413,7 @@ public class Sender {
 	}
 	
 	private void log(LogLine line) {
-		try {
-			logfos.write(line.toString().getBytes());
-		} catch (IOException e) {
-			e.printStackTrace();
-		}
+		this.log += line.toString();
 	}
 
 	public static void main(String[] args) {
@@ -391,14 +438,18 @@ public class Sender {
 				   Integer.parseInt(args[12]),
 				   Integer.parseInt(args[13]));
 	}
-
+	
+	int numCalled = 1;
 	// beware that this function may modify the packet input
 	public void pld_send(Packet packet, LogLine line) {
-		
+		numPLD++;
 		// decide whether to drop the packet
+		System.out.println("num random called "+numCalled++);
 		if(random.nextFloat() < pDrop) {
 			System.out.println("dropping packet "+packet.getSeqNum());
-			line.appendEvent("/drop");
+			line.setEvent("drop");
+			numDropped++;
+			numTransmitted++;
 			log(line);
 			return;
 		}
@@ -409,6 +460,7 @@ public class Sender {
 			safe_send(packet,line);
 			System.out.println("duplicating packet "+packet.getSeqNum());
 			line.appendEvent("/dup");
+			numDuplicated++;
 			log(line);
 			return;
 		}
@@ -420,6 +472,7 @@ public class Sender {
 			System.out.println("corrupting packet "+packet.getSeqNum());
 			safe_send(packet,line);
 			line.appendEvent("/corr");
+			numCorrupted++;
 			log(line);
 			return;
 		}
@@ -463,6 +516,7 @@ public class Sender {
 		public void run() {
 			safe_send(packet,line);
 			line.appendEvent("/dely");
+			numDelayed++;
 			log(line);
 			timer.cancel();
 		}
@@ -472,6 +526,7 @@ public class Sender {
 		if(orderCount == maxOrder && reorderedPacket != null) {
 			_send(reorderedPacket);
 			line.appendEvent("/rord");
+			numReordered++;
 			log(line);
 			System.out.println("reordered packet "+reorderedPacket.getSeqNum());
 			reorderedPacket = null;
@@ -496,6 +551,7 @@ public class Sender {
 		DatagramPacket dp = new DatagramPacket(bytes,bytes.length,dstAddr,dstPort);
 		try {
 			socket.send(dp);
+			numTransmitted++;
 		} catch(IOException e) {
 			System.err.println("Unable to send packet");
 		}
