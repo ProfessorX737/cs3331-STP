@@ -27,6 +27,13 @@ public class Receiver {
 	FileOutputStream logfos;
 	long baseTime;
 	
+	int numBytesReceived = 0;
+	int totalSegsReceived = 0;
+	int dataSegsReceived = 0;
+	int bitErrors = 0;
+	int dupDataReceived = 0;
+	int dupAcksSent = 0;
+	
 	public Receiver(int receiver_port, String filename) {
 		this.myPort = receiver_port;
 		inOrderPackets = new ArrayList<>();
@@ -50,6 +57,11 @@ public class Receiver {
 			while(true) {
 				socket.receive(dp);
 				Packet packet = Packet.fromBytes(dp.getData());
+				totalSegsReceived++;
+				if(packet.getDataSize() != 0) {
+					dataSegsReceived++;
+					numBytesReceived += packet.getDataSize();
+				}
 				int seqNum = packet.getSeqNum();
 				
 				if(state == State.LISTEN) {
@@ -108,6 +120,7 @@ public class Receiver {
 					}
 					System.out.println("receiver: received " + seqNum + " datasize: " + packet.getData().length);
 					if(isCorrupt(packet)) {
+						bitErrors++;
 						log("rcv/corr","D",packet.getSeqNum(),packet.getDataSize(),packet.getAckNum());
 						System.out.println("corrupt packet "+packet.getSeqNum());
 						continue;
@@ -118,20 +131,24 @@ public class Receiver {
 					if(seqNum == nextSeqNum) {
 						log("rcv","D",packet.getSeqNum(),packet.getDataSize(),packet.getAckNum());
 						inOrderPackets.add(packet);
+//						packetMap.put(seqNum, packet);
 						nextSeqNum += packet.getData().length;
 						// if incoming packet fills a gap in data
 						while(!outOfOrder.isEmpty() && outOfOrder.peek() == nextSeqNum) {
 							int poll = outOfOrder.poll();
-							Packet p = packetMap.get(poll);
-							inOrderPackets.add(p);
-							System.out.println("incrementing seqNum "+nextSeqNum+" to "+(nextSeqNum+p.getData().length));
-							nextSeqNum += p.getData().length;
+							Packet buff = packetMap.remove(poll);
+							inOrderPackets.add(buff);
+							System.out.println("incrementing seqNum "+nextSeqNum+" to "+(nextSeqNum+buff.getData().length));
+							nextSeqNum += buff.getData().length;
 						}
+//						// if there were buffered packets ahead, then not reliable timestamp
+						ack.setUseTimestamp(packet.getUseTimestamp());
+						ack.setTimestamp(packet.getTimestamp());
 						ack.setAckNum(nextSeqNum);
 						ack.setSeqNum(mySeqNum);
 						System.out.println("receiver: sending ack " + nextSeqNum);
 						send(ack);
-						log("snd","D",ack.getSeqNum(),ack.getDataSize(),ack.getAckNum());
+						log("snd","A",ack.getSeqNum(),ack.getDataSize(),ack.getAckNum());
 					} else {
 						log("rcv","D",packet.getSeqNum(),packet.getDataSize(),packet.getAckNum());
 						// send duplicate ack
@@ -139,8 +156,13 @@ public class Receiver {
 						ack.setSeqNum(mySeqNum);
 						System.out.println("receiver: sending duplicate ack " + nextSeqNum);
 						send(ack);
+						dupAcksSent++;
 						log("snd/DA","A",ack.getSeqNum(),0,ack.getAckNum());
-						if(seqNum > nextSeqNum && !outOfOrder.contains(seqNum)) {
+						if(outOfOrder.contains(seqNum)) {
+							dupDataReceived++;
+							continue;
+						}
+						if(seqNum > nextSeqNum) {
 							// gap detected
 							outOfOrder.add(seqNum);
 							packetMap.put(seqNum, packet);
@@ -163,6 +185,7 @@ public class Receiver {
 				fos.write(packet.getData(), 0, data.length);
 			}
 			
+			addLogSummary();
 			logfos.write(log.getBytes());
 			fos.close();
 			socket.close();
@@ -171,6 +194,17 @@ public class Receiver {
 			e.printStackTrace();
 		}
 		
+	}
+
+	private void addLogSummary() {
+		log += String.format("========================================================\n");
+		log += String.format("%-40s %8d\n","Amount of data received (bytes)",numBytesReceived);
+		log += String.format("%-40s %8d\n","Total segments Received",totalSegsReceived);
+		log += String.format("%-40s %8d\n","Data segments received",dataSegsReceived);
+		log += String.format("%-40s %8d\n","Data segments with Bit Errors",bitErrors);
+		log += String.format("%-40s %8d\n","Duplicate data segments received",dupDataReceived);
+		log += String.format("%-40s %8d\n","Duplicate ACKs sent",dupAcksSent);
+		log += String.format("========================================================\n");
 	}
 	
 	public void send(Packet packet) {

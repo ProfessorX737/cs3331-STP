@@ -16,16 +16,21 @@ public class Packet implements Serializable {
 	private int seqNum;
 	private int ackNum;
 	private int maxBufferSize;
+	private boolean useTimestamp;
+	private long timestamp;
 	private long checksum;
 	private byte[] data;
 	
 	public Packet(boolean syn, boolean ack, boolean fin, 
-			int seqNum, int ackNum, int recvWindow, long checksum, byte[] data) {
+			int seqNum, int ackNum, int maxBufferSize, boolean useTimestamp, long timestamp, long checksum, byte[] data) {
 		this.syn = syn;
 		this.ack = ack;
 		this.fin = fin;
 		this.seqNum = seqNum;
 		this.ackNum = ackNum;
+		this.maxBufferSize = maxBufferSize;
+		this.useTimestamp = useTimestamp;
+		this.timestamp = timestamp;
 		this.checksum = checksum;
 		this.data = data;
 	}
@@ -37,12 +42,14 @@ public class Packet implements Serializable {
 			 p.getSeqNum(),
 			 p.getAckNum(),
 			 p.getMaxBufferSize(),
+			 p.getUseTimestamp(),
+			 p.getTimestamp(),
 			 p.getChecksum(),
 			 Arrays.copyOf(p.getData(), p.getData().length));
 	}
 	
 	public Packet() {
-		this(false,false,false,0,0,0,0,null);
+		this(false,false,false,0,0,0,false,0,0,null);
 	}
 	
 	public boolean getSyn() {
@@ -67,6 +74,14 @@ public class Packet implements Serializable {
 	
 	public int getMaxBufferSize() {
 		return maxBufferSize;
+	}
+	
+	public boolean getUseTimestamp() {
+		return this.useTimestamp;
+	}
+	
+	public long getTimestamp() {
+		return timestamp;
 	}
 	
 	public long getChecksum() {
@@ -107,6 +122,14 @@ public class Packet implements Serializable {
 	
 	public void setChecksum(long checksum) {
 		this.checksum = checksum;
+	}
+	
+	public void setUseTimestamp(boolean useTimestamp) {
+		this.useTimestamp = useTimestamp;
+	}
+	
+	public void setTimestamp(long timestamp) {
+		this.timestamp = timestamp;
 	}
 	
 	public String toString() {
