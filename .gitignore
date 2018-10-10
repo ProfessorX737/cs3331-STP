@@ -1,2 +1,4 @@
-*.class*
-
+*
+!*.java
+!report.pdf
+!.gitignore

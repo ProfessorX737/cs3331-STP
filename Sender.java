@@ -50,6 +50,7 @@ public class Sender {
 
 	private Random random;
 	private Packet reorderedPacket;
+	private String rordEvent;
 	private int orderCount;
 	private Semaphore delayLock;
 	
@@ -106,7 +107,7 @@ public class Sender {
 
 		random = new Random(seed);
 		reorderedPacket = null;
-		String rordEvent = "";
+		rordEvent = "";
 		orderCount = 0;
 		delayLock = new Semaphore(1);
 		
@@ -179,16 +180,16 @@ public class Sender {
 				s.acquire();
 				System.out.println("timeout occurred!" + " resending " + send_base);
 				Packet p = new Packet(packetMap.get(send_base));
-				p.setUseTimestamp(true);
+				p.setUseTimestamp(false);
 				p.setTimestamp(System.currentTimeMillis());
 				p.setChecksum(getChecksum(p));
 				pld_send(p,log("snd/RXT","D",p.getSeqNum(),p.getDataSize(),p.getAckNum()));
 				numTimeouts++;
 				setTimer(true);
-				// if stop watch was timing this segment reset it
-				if(stopWatch.isStarted() /*&& stopWatch.getSeqNum() == send_base*/) {
-					stopWatch.reset();
-				}
+//				// if stop watch was timing this segment reset it
+//				if(stopWatch.isStarted() /*&& stopWatch.getSeqNum() == send_base*/) {
+//					stopWatch.reset();
+//				}
 				s.release();
 			} catch (Exception e) {
 				e.printStackTrace();
@@ -325,16 +326,6 @@ public class Sender {
 					} else if(state == Sender.State.ESTABLISHED) {
 						// if normal ack
 						if(ackNum > send_base) {
-//							for(int key : new HashSet<Integer>(acked.keySet())) {
-//								if(key < ackNum) {
-//									acked.remove(key);
-//								}
-//							}
-//							for(int key : new HashSet<Integer>(packetMap.keySet())) {
-//								if(key < ackNum) {
-//									packetMap.remove(key);
-//								}
-//							}
 							log(log("rcv","A",packet.getSeqNum(),0,ackNum));
 							System.out.println("sender: received ack="+ackNum+" seqNum="+packet.getSeqNum());
 							send_base = ackNum;
@@ -392,7 +383,7 @@ public class Sender {
 								// fast retransmit
 								acked.put(ackNum, 0);
 								Packet p = new Packet(packetMap.get(ackNum));
-								p.setUseTimestamp(true);
+								p.setUseTimestamp(false);
 								p.setTimestamp(System.currentTimeMillis());
 								p.setChecksum(getChecksum(p));
 								pld_send(p,log("snd/RXT","D",p.getSeqNum(),p.getDataSize(),p.getAckNum()));
@@ -514,6 +505,7 @@ public class Sender {
 			if(reorderedPacket == null) {
 				System.out.println("packet "+packet.getSeqNum()+" to be reordered");
 				reorderedPacket = packet;
+				rordEvent = new String(line.getEvent());
 				orderCount = 0;
 			} else {
 				safe_send(packet,line);
@@ -548,6 +540,7 @@ public class Sender {
 		}
 		public void run() {
 			safe_send(packet,line);
+			System.out.println("delayed packet "+packet.getSeqNum()+" sent");
 			LogLine copy = log(line.getEvent(),"D",packet.getSeqNum(),packet.getDataSize(),packet.getAckNum());
 			numPLD++;
 			copy.appendEvent("/dely");
@@ -561,7 +554,7 @@ public class Sender {
 		if(orderCount == maxOrder && reorderedPacket != null) {
 			_send(reorderedPacket);
 			numPLD++;
-			LogLine copy = log(line.getEvent(),"D",reorderedPacket.getSeqNum(),reorderedPacket.getDataSize(),reorderedPacket.getAckNum());
+			LogLine copy = log(rordEvent,"D",reorderedPacket.getSeqNum(),reorderedPacket.getDataSize(),reorderedPacket.getAckNum());
 			copy.appendEvent("/rord");
 			numReordered++;
 			log(copy);

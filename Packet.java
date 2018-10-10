@@ -10,13 +10,13 @@ import java.util.Arrays;
 
 public class Packet implements Serializable {
 	private static final long serialVersionUID = 1L;
+	private int seqNum;
+	private int ackNum;
 	private boolean syn;
 	private boolean ack;
 	private boolean fin;
-	private int seqNum;
-	private int ackNum;
-	private int maxBufferSize;
 	private boolean useTimestamp;
+	private int maxBufferSize;
 	private long timestamp;
 	private long checksum;
 	private byte[] data;
