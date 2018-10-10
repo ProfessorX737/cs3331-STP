@@ -31,7 +31,7 @@ public class Sender {
 	Semaphore s;
 	boolean finished = false;
 	Timer timer;
-	PacketStopWatch stopWatch;
+	//PacketStopWatch stopWatch;
 	Map<Integer, Integer> acked; // mapping acks to number of times it was received
 	Map<Integer, Packet> packetMap; // maps sequence number to packet
 	Queue<Packet> retransmits;
@@ -78,7 +78,7 @@ public class Sender {
 		s = new Semaphore(1);
 		finished = false;
 		timer = new Timer();
-		stopWatch = new PacketStopWatch();
+		//stopWatch = new PacketStopWatch();
 		acked = new HashMap<>();
 		packetMap = new HashMap<>();
 		rcvrSeqNum = 0;
@@ -336,7 +336,7 @@ public class Sender {
 								EstimatedRTT = ((1f-alpha) * EstimatedRTT + alpha*SampleRTT);
 								DevRTT = ((1f-beta)*DevRTT + beta*Math.abs(SampleRTT - EstimatedRTT));
 								TimeoutInterval = Math.round(EstimatedRTT + gamma*DevRTT);
-								System.out.println("Packet "+stopWatch.getSeqNum()+" Timeout="+TimeoutInterval);
+								System.out.println("New Timeout Interval ="+TimeoutInterval);
 							}
 //							if(stopWatch.isStarted() && stopWatch.getExpectedAck() == ackNum) {
 //								float SampleRTT = 1f*stopWatch.getElapsedTime();
@@ -389,9 +389,9 @@ public class Sender {
 								pld_send(p,log("snd/RXT","D",p.getSeqNum(),p.getDataSize(),p.getAckNum()));
 								numFast++;
 								//retransmits.add(p);
-								if(stopWatch.getSeqNum() == ackNum) {
-									stopWatch.reset();
-								}
+//								if(stopWatch.getSeqNum() == ackNum) {
+//									stopWatch.reset();
+//								}
 								System.out.println("sender: fast retransmit " + ackNum);
 							}
 						}
