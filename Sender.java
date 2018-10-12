@@ -321,6 +321,7 @@ public class Sender {
 							ack.setChecksum(getChecksum(ack));
 							_send(ack);
 							log(log("snd","A",nextSeqNum,0,rcvrSeqNum));
+							send_base = ackNum;
 							System.out.println("sender: ESTABLISHED");
 						}
 					} else if(state == Sender.State.ESTABLISHED) {
